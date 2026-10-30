@@ -1,0 +1,83 @@
+
+name: Android baseline build
+
+on:
+  push:
+    branches:
+      - sats/phase-1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-online-debug:
+    name: Build online debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build components
+        run: |
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;28.2.13676358" \
+            "cmake;3.22.1"
+          yes | sdkmanager --licenses
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Download Antigravity runtime bundle
+        run: |
+          mkdir -p dist/runtime-bundles
+          curl --fail --location --retry 3 \
+            "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4/pocketdev-agy-arm64-2026.09.1.tar.zst" \
+            --output dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst
+          echo "a659ab9188956fc4721ca86fb21b5118e0e489f47a5e02ae6b4f2fb423659d78  dist/runtime-bundles/pocketdev-agy-arm64-2026.09.1.tar.zst" | sha256sum --check
+
+      - name: Verify build environment
+        run: |
+          java -version
+          ./gradlew --version
+          "$ANDROID_SDK_ROOT/cmake/3.22.1/bin/cmake" --version
+          test -x "$ANDROID_SDK_ROOT/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
+      - name: Build online debug APK
+        run: ./gradlew --no-daemon --stacktrace :app:assembleOnlineDebug
+
+      - name: Verify APK
+        run: |
+          APK="app/build/outputs/apk/online/debug/app-online-debug.apk"
+          test -s "$APK"
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sats-mobile-studio-baseline-online-debug
+          path: app/build/outputs/apk/online/debug/app-online-debug.apk
+          if-no-files-found: error
+          retention-days: 14
